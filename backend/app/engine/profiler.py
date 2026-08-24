@@ -9,7 +9,6 @@ def compute_shannon_entropy(series: pd.Series) -> float:
     if len(clean_series) == 0:
         return 0.0
     probabilities = clean_series.value_counts(normalize=True).values
-    # Filter out 0 probabilities to prevent log2(0)
     probabilities = probabilities[probabilities > 0]
     return float(-np.sum(probabilities * np.log2(probabilities)))
 
@@ -23,10 +22,7 @@ def compute_chi2(confusion_matrix: pd.DataFrame) -> float:
     if total == 0:
         return 0.0
 
-    # Expected frequencies: (row_sum * col_sum) / total
     expected = (row_sums @ col_sums) / total
-
-    # Avoid divide-by-zero on zero expected frequencies
     with np.errstate(divide="ignore", invalid="ignore"):
         chi2_stat = np.where(expected > 0, ((observed - expected) ** 2) / expected, 0.0)
 
@@ -49,39 +45,30 @@ def calculate_dqaf_health_score(
     duplicate_ratio: float,
     high_cardinality_cols: List[str],
     has_severe_imbalance: bool,
+    has_moderate_imbalance: bool,
     has_leakage_suspect: bool,
     collinear_pairs: List[Dict[str, Any]]
 ) -> int:
-    """
-    Computes a deterministic DQAF Health Score (0 - 100).
-    Starts at 100 and applies weighted deductions based on structural flaws.
-    """
     score = 100.0
 
-    # Missingness penalty (up to -25 pts)
+    # Penalties
     score -= min(missing_ratio * 100 * 0.5, 25.0)
-
-    # Duplicate row penalty (up to -10 pts)
     score -= min(duplicate_ratio * 100 * 1.0, 10.0)
-
-    # High cardinality columns (-5 pts each, max -15 pts)
     score -= min(len(high_cardinality_cols) * 5.0, 15.0)
-
-    # Class imbalance penalty (-15 pts)
+    
     if has_severe_imbalance:
         score -= 15.0
+    elif has_moderate_imbalance:
+        score -= 8.0
 
-    # Data leakage risk penalty (-20 pts)
     if has_leakage_suspect:
         score -= 20.0
 
-    # Collinearity penalty (-3 pts per collinear pair, max -15 pts)
     score -= min(len(collinear_pairs) * 3.0, 15.0)
 
     return int(max(round(score), 0))
 
 def profile_dataset(df: pd.DataFrame, target_column: Optional[str] = None) -> Dict[str, Any]:
-    """Generates the full DQAF statistical profile and nutrition metrics."""
     total_rows, total_cols = df.shape
     total_cells = total_rows * total_cols
 
@@ -122,14 +109,19 @@ def profile_dataset(df: pd.DataFrame, target_column: Optional[str] = None) -> Di
 
     # 3. Class Imbalance Check
     has_severe_imbalance = False
+    has_moderate_imbalance = False
     class_distribution = {}
     if target_column and target_column in df.columns:
         target_counts = df[target_column].value_counts(normalize=True)
         class_distribution = {str(k): round(float(v) * 100, 2) for k, v in target_counts.items()}
-        if len(target_counts) > 1 and target_counts.iloc[0] >= 0.85:
-            has_severe_imbalance = True
+        if len(target_counts) > 1:
+            maj_ratio = target_counts.iloc[0]
+            if maj_ratio >= 0.80:
+                has_severe_imbalance = True
+            elif maj_ratio >= 0.65:
+                has_moderate_imbalance = True
 
-    # 4. Multicollinearity Matrix (Numeric Pearson Correlation)
+    # 4. Multicollinearity Matrix
     collinear_pairs = []
     if len(numeric_cols) > 1:
         corr_matrix = df[numeric_cols].corr(method="pearson").abs()
@@ -173,12 +165,13 @@ def profile_dataset(df: pd.DataFrame, target_column: Optional[str] = None) -> Di
                     has_leakage_suspect = True
                     leakage_suspects.append(col)
 
-    # 7. Overall DQAF Health Score
+    # 7. DQAF Health Score
     health_score = calculate_dqaf_health_score(
         missing_ratio=missing_ratio,
         duplicate_ratio=duplicate_ratio,
         high_cardinality_cols=high_cardinality_cols,
         has_severe_imbalance=has_severe_imbalance,
+        has_moderate_imbalance=has_moderate_imbalance,
         has_leakage_suspect=has_leakage_suspect,
         collinear_pairs=collinear_pairs
     )
@@ -197,6 +190,7 @@ def profile_dataset(df: pd.DataFrame, target_column: Optional[str] = None) -> Di
         "health_score": health_score,
         "risk_flags": {
             "has_severe_imbalance": has_severe_imbalance,
+            "has_moderate_imbalance": has_moderate_imbalance,
             "has_leakage_suspect": has_leakage_suspect,
             "leakage_columns": leakage_suspects,
             "high_cardinality_columns": high_cardinality_cols,

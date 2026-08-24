@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DQAF Full Analysis Studio</title>
+  <link rel="stylesheet" href="dashboard.css">
+  <!-- Bundled local chart.min.js to comply with CSP -->
+  <script src="chart.min.js"></script>
+</head>
+<body>
+  <!-- Global App Bar -->
+  <header class="navbar">
+    <div class="brand">
+      <span class="logo-pill">DQAF</span>
+      <h2>Analysis Studio</h2>
+      <span id="datasetTitle" class="dataset-slug">Loading...</span>
+    </div>
+    <div class="actions">
+      <select id="dashboardTargetSelect"></select>
+      <button id="refreshBtn" class="btn btn-secondary">Refresh Analysis</button>
+    </div>
+  </header>
+
+  <!-- Main 2-Column Studio Grid -->
+  <main class="studio-layout">
+    <!-- LEFT COLUMN: Docked Nutrition Card -->
+    <aside class="sidebar-panel">
+      <div class="nutrition-card">
+        <div class="card-header">
+          <h3>Nutrition Facts</h3>
+          <div id="dockedHealthScore" class="score-badge">--/100</div>
+        </div>
+        <p class="card-caption">Dataset Health & Risk Profile</p>
+
+        <div class="vitals-table">
+          <div class="vital-row thick-border">
+            <span>Sampled Rows</span>
+            <b id="dockedRows">--</b>
+          </div>
+          <div class="vital-row">
+            <span>Columns</span>
+            <b id="dockedCols">--</b>
+          </div>
+          <div class="vital-row">
+            <span>Missing Rate</span>
+            <b id="dockedMissing">--%</b>
+          </div>
+          <div class="vital-row thick-border">
+            <span>Duplicates</span>
+            <b id="dockedDuplicates">--%</b>
+          </div>
+        </div>
+
+        <div class="section-group">
+          <h4>Active Risk Flags</h4>
+          <div id="dockedRiskBadges" class="badge-grid"></div>
+        </div>
+
+        <div class="section-group">
+          <h4>Class Distribution</h4>
+          <div id="classDistContainer" class="dist-list"></div>
+        </div>
+
+        <div class="section-group">
+          <h4>Model Impact Forecast</h4>
+          <div class="impact-box">
+            <div><span>Linear Models:</span> <b id="dockedLinear">--</b></div>
+            <div><span>Tree Ensembles:</span> <b id="dockedTree">--</b></div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- RIGHT COLUMN: Deep Dive Canvas -->
+    <section class="deep-dive-canvas">
+      <!-- Row 1: Degradation Curves & Correlation Redundancy -->
+      <div class="canvas-grid-2">
+        <div class="chart-card">
+          <div class="chart-header">
+            <h4>Algorithmic Degradation Stress-Test</h4>
+            <span class="subtext">F1-Score drop across induced missingness</span>
+          </div>
+          <div class="chart-container">
+            <canvas id="degradationChart"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-header">
+            <h4>Information Content (Shannon Entropy)</h4>
+            <span class="subtext">Per-column entropy (H(X) in bits)</span>
+          </div>
+          <div class="chart-container">
+            <canvas id="entropyChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 2: Collinearities & Leakage Warnings -->
+      <div class="canvas-grid-2">
+        <div class="data-card">
+          <div class="chart-header">
+            <h4>Collinearity & Association Matrix</h4>
+            <span class="subtext">High Pearson / Cramér's V pairings (r &ge; 0.85)</span>
+          </div>
+          <div id="collinearListContainer" class="table-container">
+            <p class="empty-state">No extreme collinear pairs identified.</p>
+          </div>
+        </div>
+
+        <div class="data-card">
+          <div class="chart-header">
+            <h4>Target Leakage Diagnostics</h4>
+            <span class="subtext">Features with suspicious correlation (r &ge; 0.98)</span>
+          </div>
+          <div id="leakageListContainer" class="table-container">
+            <p class="empty-state">No direct target leakage suspects detected.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Row 3: Actionable Remediation Recipes -->
+      <div class="data-card">
+        <div class="chart-header">
+          <h4>Actionable Remediation Recipes</h4>
+          <span class="subtext">Scikit-learn code blocks customized for detected anomalies</span>
+        </div>
+        <div id="recipesContainer" class="recipes-grid"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
