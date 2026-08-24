@@ -8,6 +8,7 @@ class KaggleAuth(BaseModel):
 class ProfileRequest(BaseModel):
     dataset_slug: str = Field(..., description="Kaggle dataset slug in 'owner/dataset' format")
     target_column: Optional[str] = Field(None, description="User selected target column override")
+    task_mode: Optional[str] = Field("auto", description="User motive: 'auto', 'classification', 'regression', 'unsupervised'")
     auth: Optional[KaggleAuth] = Field(None, description="BYOK Kaggle credentials")
     max_sample_rows: int = Field(5000, ge=500, le=20000)
 

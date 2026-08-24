@@ -5,23 +5,33 @@ document.addEventListener("DOMContentLoaded", () => {
   const urlParams = new URLSearchParams(window.location.search);
   const slug = urlParams.get("slug");
   const targetOverride = urlParams.get("target") || null;
+  const modeParam = urlParams.get("mode") || null;
 
   if (slug) {
     document.getElementById("datasetTitle").innerText = slug;
-    loadDashboardData(slug, targetOverride);
+    loadDashboardData(slug, targetOverride, modeParam);
   }
 
+  document.getElementById("dashboardTaskModeSelect").addEventListener("change", (e) => {
+    const currentTarget = document.getElementById("dashboardTargetSelect").value;
+    const mode = e.target.value;
+    document.getElementById("dashboardTargetSelect").style.display = (mode === "unsupervised") ? "none" : "inline-block";
+    loadDashboardData(slug, currentTarget, mode);
+  });
+
   document.getElementById("dashboardTargetSelect").addEventListener("change", (e) => {
-    loadDashboardData(slug, e.target.value);
+    const currentMode = document.getElementById("dashboardTaskModeSelect").value;
+    loadDashboardData(slug, e.target.value, currentMode);
   });
 
   document.getElementById("refreshBtn").addEventListener("click", () => {
     const currentTarget = document.getElementById("dashboardTargetSelect").value;
-    loadDashboardData(slug, currentTarget);
+    const currentMode = document.getElementById("dashboardTaskModeSelect").value;
+    loadDashboardData(slug, currentTarget, currentMode);
   });
 });
 
-async function loadDashboardData(slug, targetOverride = null) {
+async function loadDashboardData(slug, targetOverride = null, taskMode = null) {
   const authData = await chrome.storage.local.get(["kaggleUsername", "kaggleKey"]);
   const authPayload = (authData.kaggleUsername && authData.kaggleKey)
     ? { username: authData.kaggleUsername, key: authData.kaggleKey }
@@ -30,6 +40,7 @@ async function loadDashboardData(slug, targetOverride = null) {
   const payload = {
     dataset_slug: slug,
     target_column: targetOverride,
+    task_mode: taskMode || "auto",
     auth: authPayload,
     max_sample_rows: 5000
   };
@@ -59,8 +70,21 @@ async function loadDashboardData(slug, targetOverride = null) {
 }
 
 function renderCompleteStudio(data) {
-  // 1. Populate Target Selector
+  // 1. Sync Task Dropdown with Backend Decision
+  const modeSelect = document.getElementById("dashboardTaskModeSelect");
+  const rawTask = (data.target_detection.task_type || "").toLowerCase();
+  if (rawTask.includes("classification")) {
+    modeSelect.value = "classification";
+  } else if (rawTask.includes("regression")) {
+    modeSelect.value = "regression";
+  } else {
+    modeSelect.value = "unsupervised";
+  }
+
   const targetSelect = document.getElementById("dashboardTargetSelect");
+  targetSelect.style.display = (modeSelect.value === "unsupervised") ? "none" : "inline-block";
+
+  // 2. Populate Target Selector
   targetSelect.innerHTML = "";
   (data.target_detection.available_columns || []).forEach(col => {
     const opt = document.createElement("option");
@@ -70,7 +94,7 @@ function renderCompleteStudio(data) {
     targetSelect.appendChild(opt);
   });
 
-  // 2. Render Docked Nutrition Card
+  // 3. Render Docked Nutrition Card
   document.getElementById("dockedHealthScore").innerText = `${data.health_score}/100`;
   document.getElementById("dockedRows").innerText = data.vitals.total_rows.toLocaleString();
   document.getElementById("dockedCols").innerText =
@@ -78,27 +102,17 @@ function renderCompleteStudio(data) {
   document.getElementById("dockedMissing").innerText = `${data.vitals.missing_cell_pct}%`;
   document.getElementById("dockedDuplicates").innerText = `${data.vitals.duplicate_row_pct}%`;
 
-  // Risk Badges (including moderate imbalance)
+  // Risk Badges
   const badgesBox = document.getElementById("dockedRiskBadges");
   badgesBox.innerHTML = "";
-  if (data.risk_flags.has_severe_imbalance) {
-    badgesBox.innerHTML += `<span class="badge red">Severe Imbalance</span>`;
-  } else if (data.risk_flags.has_moderate_imbalance) {
-    badgesBox.innerHTML += `<span class="badge amber">Moderate Imbalance</span>`;
-  }
-
-  if (data.risk_flags.has_leakage_suspect) {
-    badgesBox.innerHTML += `<span class="badge red">Leakage Risk</span>`;
-  }
-  if (data.risk_flags.high_cardinality_columns && data.risk_flags.high_cardinality_columns.length > 0) {
+  if (data.risk_flags.has_severe_imbalance) badgesBox.innerHTML += `<span class="badge red">Severe Imbalance</span>`;
+  if (data.risk_flags.has_moderate_imbalance) badgesBox.innerHTML += `<span class="badge amber">Moderate Imbalance</span>`;
+  if (data.risk_flags.has_leakage_suspect) badgesBox.innerHTML += `<span class="badge red">Leakage Risk</span>`;
+  if (data.risk_flags.high_cardinality_columns.length > 0)
     badgesBox.innerHTML += `<span class="badge amber">Cardinality (${data.risk_flags.high_cardinality_columns.length})</span>`;
-  }
-  if (data.risk_flags.collinear_pairs && data.risk_flags.collinear_pairs.length > 0) {
+  if (data.risk_flags.collinear_pairs.length > 0)
     badgesBox.innerHTML += `<span class="badge amber">Collinear (${data.risk_flags.collinear_pairs.length})</span>`;
-  }
-  if (badgesBox.children.length === 0) {
-    badgesBox.innerHTML = `<span class="badge green">Healthy Structure</span>`;
-  }
+  if (badgesBox.children.length === 0) badgesBox.innerHTML = `<span class="badge green">Healthy Structure</span>`;
 
   // Class Distribution
   const distBox = document.getElementById("classDistContainer");
@@ -106,32 +120,41 @@ function renderCompleteStudio(data) {
   for (const [cls, pct] of Object.entries(data.class_distribution || {})) {
     distBox.innerHTML += `<div class="dist-item"><span>Class ${cls}</span><b>${pct}%</b></div>`;
   }
+  if (Object.keys(data.class_distribution || {}).length === 0) {
+    distBox.innerHTML = `<span style="font-size:11px; color:#64748b;">N/A (Non-classification)</span>`;
+  }
 
   // Model Snapshot
   if (data.stress_test && data.stress_test.model_snapshot) {
     document.getElementById("dockedLinear").innerText = data.stress_test.model_snapshot.linear_model_stability;
     document.getElementById("dockedTree").innerText = data.stress_test.model_snapshot.tree_model_stability;
+  } else {
+    document.getElementById("dockedLinear").innerText = "N/A";
+    document.getElementById("dockedTree").innerText = "N/A";
   }
 
-  // 3. Render Degradation Chart
+  // 4. Render Degradation Chart
   renderDegradationChart(data.stress_test);
 
-  // 4. Render Entropy Chart
+  // 5. Render Entropy Chart
   renderEntropyChart(data.column_profiles);
 
-  // 5. Render Collinearities & Leakage tables
+  // 6. Render Collinearities & Leakage tables
   renderCollinearities(data.risk_flags.collinear_pairs);
   renderLeakage(data.risk_flags.leakage_columns);
 
-  // 6. Render Remediation Recipes
+  // 7. Render Remediation Recipes
   renderRecipes(data.remediation_recipes);
 }
 
 function renderDegradationChart(stressData) {
-  if (!stressData || !stressData.degradation_curve) return;
   const ctx = document.getElementById("degradationChart").getContext("2d");
-
   if (degradationChartInstance) degradationChartInstance.destroy();
+
+  if (!stressData || !stressData.degradation_curve) {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    return;
+  }
 
   const labels = stressData.degradation_curve.missingness_levels.map(l => `${l * 100}% Missing`);
   const models = stressData.degradation_curve.models;
@@ -157,7 +180,6 @@ function renderDegradationChart(stressData) {
 function renderEntropyChart(columns) {
   if (!columns) return;
   const ctx = document.getElementById("entropyChart").getContext("2d");
-
   if (entropyChartInstance) entropyChartInstance.destroy();
 
   const labels = columns.map(c => c.name);

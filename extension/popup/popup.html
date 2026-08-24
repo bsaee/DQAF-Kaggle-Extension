@@ -6,7 +6,6 @@
 </head>
 <body>
   <div class="container">
-    <!-- Header -->
     <div class="header">
       <div class="title-row">
         <h2>Dataset Nutrition Facts</h2>
@@ -15,7 +14,7 @@
       <p id="datasetSlugText" class="subtitle">Checking active dataset...</p>
     </div>
 
-    <!-- Key Settings Panel (collapsible if no key saved) -->
+    <!-- Key Settings Panel -->
     <div id="authSection" class="card auth-card">
       <div class="auth-header">
         <span>⚙️ Kaggle API Key</span>
@@ -41,10 +40,20 @@
 
     <!-- Nutrition Card Content -->
     <div id="nutritionContent" class="hidden">
-      <!-- Target Selector -->
-      <div class="form-group">
-        <label for="targetSelect">Target Column:</label>
-        <select id="targetSelect"></select>
+      <!-- User Motive / Task Selector -->
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="taskModeSelect">Motive / Task:</label>
+          <select id="taskModeSelect">
+            <option value="classification">Classification</option>
+            <option value="regression">Regression</option>
+            <option value="unsupervised">Clustering / Unsupervised</option>
+          </select>
+        </div>
+        <div class="form-group" id="targetGroup">
+          <label for="targetSelect">Target Column:</label>
+          <select id="targetSelect"></select>
+        </div>
       </div>
 
       <!-- Core Vitals Table -->

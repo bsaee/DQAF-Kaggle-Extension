@@ -1,8 +1,5 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from functools import lru_cache
-import json
-
 from app.schemas.profile import ProfileRequest, ProfileResponse, ValidateKeyRequest
 from app.services.kaggle_service import fetch_and_load_kaggle_dataset, set_kaggle_credentials
 from app.engine.task_detector import detect_task_type
@@ -16,10 +13,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for Chrome Extension access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows requests from chrome-extension:// origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,7 +27,6 @@ def root():
 
 @app.post("/api/v1/validate-key")
 def validate_kaggle_key(payload: ValidateKeyRequest):
-    """Checks if the user's Kaggle credentials are valid."""
     try:
         set_kaggle_credentials(payload)
         from kaggle.api.kaggle_api_extended import KaggleApi
@@ -43,10 +38,6 @@ def validate_kaggle_key(payload: ValidateKeyRequest):
 
 @app.post("/api/v1/profile", response_model=ProfileResponse)
 def generate_profile(payload: ProfileRequest):
-    """
-    Ingests Kaggle dataset, profiles data health, runs 3-model stress test,
-    and returns full DQAF analytics.
-    """
     try:
         df, file_name = fetch_and_load_kaggle_dataset(
             dataset_slug=payload.dataset_slug,
@@ -56,14 +47,18 @@ def generate_profile(payload: ProfileRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to ingest dataset: {str(e)}")
 
-    # 1. Target & Task Detection
-    task_info = detect_task_type(df, target_column=payload.target_column)
+    # 1. Target & Task Detection with User Motive / Task Mode
+    task_info = detect_task_type(
+        df,
+        target_column=payload.target_column,
+        task_mode=payload.task_mode or "auto"
+    )
     target_col = task_info["target_column"]
 
-    # 2. Statistical Profiling & Nutrition Vitals
+    # 2. Statistical Profiling
     profile_data = profile_dataset(df, target_column=target_col)
 
-    # 3. ML Degradation Stress Test (if classification task)
+    # 3. ML Degradation Stress Test
     stress_test_data = None
     if task_info["is_supported"] and target_col:
         try:

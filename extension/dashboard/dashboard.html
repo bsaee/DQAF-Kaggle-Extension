@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <title>DQAF Full Analysis Studio</title>
   <link rel="stylesheet" href="dashboard.css">
-  <!-- Bundled local chart.min.js to comply with CSP -->
   <script src="chart.min.js"></script>
 </head>
 <body>
@@ -16,6 +15,11 @@
       <span id="datasetTitle" class="dataset-slug">Loading...</span>
     </div>
     <div class="actions">
+      <select id="dashboardTaskModeSelect">
+        <option value="classification">Classification</option>
+        <option value="regression">Regression</option>
+        <option value="unsupervised">Clustering / Unsupervised</option>
+      </select>
       <select id="dashboardTargetSelect"></select>
       <button id="refreshBtn" class="btn btn-secondary">Refresh Analysis</button>
     </div>
