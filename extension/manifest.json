@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "DQAF: Kaggle Dataset Nutrition Label",
+  "version": "1.0.0",
+  "description": "On-platform ML dataset quality assessment and algorithmic degradation forecaster for Kaggle.",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://www.kaggle.com/*",
+    "http://localhost:8000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.kaggle.com/datasets/*/*"],
+      "js": ["content.js"],
+      "css": ["content.css"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "DQAF Dataset Nutrition Label"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard/dashboard.html", "dashboard/*"],
+      "matches": ["https://www.kaggle.com/*"]
+    }
+  ]
+}

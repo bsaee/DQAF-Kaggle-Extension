@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="title-row">
+        <h2>Dataset Nutrition Facts</h2>
+        <span id="healthScoreBadge" class="score-badge">--/100</span>
+      </div>
+      <p id="datasetSlugText" class="subtitle">Checking active dataset...</p>
+    </div>
+
+    <!-- Key Settings Panel (collapsible if no key saved) -->
+    <div id="authSection" class="card auth-card">
+      <div class="auth-header">
+        <span>⚙️ Kaggle API Key</span>
+        <button id="toggleAuthBtn" class="link-btn">Edit</button>
+      </div>
+      <div id="authInputs" class="auth-inputs hidden">
+        <input type="text" id="usernameInput" placeholder="Kaggle Username">
+        <input type="password" id="keyInput" placeholder="Kaggle API Key">
+        <button id="saveAuthBtn" class="btn primary-btn">Save Key</button>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loadingState" class="state-container hidden">
+      <div class="spinner"></div>
+      <p>Profiling dataset with DQAF engine...</p>
+    </div>
+
+    <!-- Error State -->
+    <div id="errorState" class="state-container error-container hidden">
+      <p id="errorMessage"></p>
+    </div>
+
+    <!-- Nutrition Card Content -->
+    <div id="nutritionContent" class="hidden">
+      <!-- Target Selector -->
+      <div class="form-group">
+        <label for="targetSelect">Target Column:</label>
+        <select id="targetSelect"></select>
+      </div>
+
+      <!-- Core Vitals Table -->
+      <div class="nutrition-table">
+        <div class="table-row border-thick">
+          <span>Total Rows Sampled</span>
+          <b id="totalRows">--</b>
+        </div>
+        <div class="table-row">
+          <span>Columns (Num / Cat)</span>
+          <b id="colDistribution">-- / --</b>
+        </div>
+        <div class="table-row">
+          <span>Missing Cell Rate</span>
+          <b id="missingPct">--%</b>
+        </div>
+        <div class="table-row border-thick">
+          <span>Duplicate Rows</span>
+          <b id="duplicatePct">--%</b>
+        </div>
+      </div>
+
+      <!-- High Risk Ingredients -->
+      <div class="risk-section">
+        <label>Active Risk Flags:</label>
+        <div id="riskBadgesContainer" class="badge-list"></div>
+      </div>
+
+      <!-- Quick Model Impact Snapshot -->
+      <div class="model-snapshot">
+        <label>Estimated Model Stability:</label>
+        <div class="snapshot-bars">
+          <div class="snapshot-row">
+            <span>Linear Models:</span>
+            <span id="linearStability" class="status-tag">--</span>
+          </div>
+          <div class="snapshot-row">
+            <span>Tree Ensembles:</span>
+            <span id="treeStability" class="status-tag">--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer Button -->
+      <button id="openDashboardBtn" class="btn launch-btn">
+        Open Full DQAF Analysis Studio ↗
+      </button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
