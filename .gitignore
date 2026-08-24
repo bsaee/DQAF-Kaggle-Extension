@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Kaggle Credentials & Data cache
+kaggle.json
+*.csv
+*.zip
+data_cache/
+
+# Environment Variables
+.env
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
