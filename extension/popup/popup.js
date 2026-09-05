@@ -9,12 +9,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     const mode = e.target.value;
     const targetGroup = document.getElementById("targetGroup");
     targetGroup.style.display = (mode === "unsupervised") ? "none" : "flex";
-    fetchProfile(currentSlug, document.getElementById("targetSelect").value, mode);
+    if (currentSlug) fetchProfile(currentSlug, document.getElementById("targetSelect").value, mode);
   });
 
   document.getElementById("targetSelect").addEventListener("change", (e) => {
     const mode = document.getElementById("taskModeSelect").value;
-    fetchProfile(currentSlug, e.target.value, mode);
+    if (currentSlug) fetchProfile(currentSlug, e.target.value, mode);
   });
 
   document.getElementById("openDashboardBtn").addEventListener("click", () => {
@@ -63,25 +63,29 @@ function initAuthUI() {
 }
 
 async function checkActiveTabAndLoad() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.url) return;
-
   try {
-    const url = new URL(tab.url);
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tabs || tabs.length === 0 || !tabs[0].url) {
+      showError("Please open a specific Kaggle dataset page.");
+      return;
+    }
+
+    const url = new URL(tabs[0].url);
     const parts = url.pathname.split("/").filter(Boolean);
+
     if (url.hostname.includes("kaggle.com") && parts[0] === "datasets" && parts.length >= 3) {
       currentSlug = `${parts[1]}/${parts[2]}`;
       document.getElementById("datasetSlugText").innerText = currentSlug;
       fetchProfile(currentSlug);
     } else {
-      showError("Please open a specific Kaggle dataset page to view nutrition facts.");
+      showError("Open a Kaggle dataset (e.g. kaggle.com/datasets/heptapod/titanic)");
     }
   } catch (err) {
-    showError("Could not inspect current tab URL.");
+    showError("Could not inspect active tab.");
   }
 }
 
-async function fetchProfile(slug, targetOverride = null, taskMode = null) {
+async function fetchProfile(slug, targetOverride = null, taskMode = "classification") {
   showLoading(true);
   showError(null);
 
@@ -93,7 +97,7 @@ async function fetchProfile(slug, targetOverride = null, taskMode = null) {
   const payload = {
     dataset_slug: slug,
     target_column: targetOverride,
-    task_mode: taskMode || "auto",
+    task_mode: taskMode || "classification",
     auth: authPayload,
     max_sample_rows: 5000
   };
@@ -120,38 +124,27 @@ async function fetchProfile(slug, targetOverride = null, taskMode = null) {
     }
 
     cachedProfile = await response.json();
-    renderNutritionCard(cachedProfile);
+    renderNutritionCard(cachedProfile, taskMode);
   } catch (err) {
-    console.error("DQAF Fetch Error:", err);
     showError(err.message || "Failed to reach DQAF backend.");
   } finally {
     showLoading(false);
   }
 }
 
-function renderNutritionCard(data) {
+function renderNutritionCard(data, activeMode) {
   document.getElementById("nutritionContent").classList.remove("hidden");
   document.getElementById("healthScoreBadge").innerText = `${data.health_score}/100`;
 
-  // 1. Sync Motive Dropdown to Backend's Inferred / Active Task
   const taskSelect = document.getElementById("taskModeSelect");
-  const rawTask = (data.target_detection.task_type || "").toLowerCase();
-  if (rawTask.includes("classification")) {
-    taskSelect.value = "classification";
-  } else if (rawTask.includes("regression")) {
-    taskSelect.value = "regression";
-  } else {
-    taskSelect.value = "unsupervised";
-  }
+  taskSelect.value = activeMode;
 
   const targetGroup = document.getElementById("targetGroup");
-  targetGroup.style.display = (taskSelect.value === "unsupervised") ? "none" : "flex";
+  targetGroup.style.display = (activeMode === "unsupervised") ? "none" : "flex";
 
-  // 2. Populate Target Dropdown
   const select = document.getElementById("targetSelect");
   select.innerHTML = "";
-  const cols = data.target_detection.available_columns || [];
-  cols.forEach(col => {
+  (data.target_detection.available_columns || []).forEach(col => {
     const opt = document.createElement("option");
     opt.value = col;
     opt.innerText = col;
@@ -159,45 +152,34 @@ function renderNutritionCard(data) {
     select.appendChild(opt);
   });
 
-  // 3. Vitals
   document.getElementById("totalRows").innerText = data.vitals.total_rows.toLocaleString();
   document.getElementById("colDistribution").innerText =
     `${data.vitals.numeric_column_count} Num / ${data.vitals.categorical_column_count} Cat`;
   document.getElementById("missingPct").innerText = `${data.vitals.missing_cell_pct}%`;
   document.getElementById("duplicatePct").innerText = `${data.vitals.duplicate_row_pct}%`;
 
-  // 4. Risk Badges
   const badgesContainer = document.getElementById("riskBadgesContainer");
   badgesContainer.innerHTML = "";
   const flags = data.risk_flags;
 
-  if (flags.has_severe_imbalance) {
-    badgesContainer.innerHTML += `<span class="risk-badge red">Severe Imbalance</span>`;
-  } else if (flags.has_moderate_imbalance) {
-    badgesContainer.innerHTML += `<span class="risk-badge amber">Moderate Imbalance</span>`;
-  }
-
-  if (flags.has_leakage_suspect) {
-    badgesContainer.innerHTML += `<span class="risk-badge red">Leakage Risk</span>`;
-  }
-  if (flags.high_cardinality_columns && flags.high_cardinality_columns.length > 0) {
+  if (flags.has_severe_imbalance) badgesContainer.innerHTML += `<span class="risk-badge red">Severe Imbalance</span>`;
+  if (flags.has_moderate_imbalance) badgesContainer.innerHTML += `<span class="risk-badge amber">Moderate Imbalance</span>`;
+  if (flags.has_high_skew) badgesContainer.innerHTML += `<span class="risk-badge amber">High Target Skew</span>`;
+  if (flags.has_leakage_suspect) badgesContainer.innerHTML += `<span class="risk-badge red">Leakage Risk</span>`;
+  if (flags.high_cardinality_columns && flags.high_cardinality_columns.length > 0)
     badgesContainer.innerHTML += `<span class="risk-badge amber">Cardinality (${flags.high_cardinality_columns.length})</span>`;
-  }
-  if (flags.collinear_pairs && flags.collinear_pairs.length > 0) {
+  if (flags.collinear_pairs && flags.collinear_pairs.length > 0)
     badgesContainer.innerHTML += `<span class="risk-badge amber">Collinear (${flags.collinear_pairs.length})</span>`;
-  }
-  if (badgesContainer.children.length === 0) {
-    badgesContainer.innerHTML = `<span class="risk-badge green">Clean Structure</span>`;
-  }
+  if (badgesContainer.children.length === 0) badgesContainer.innerHTML = `<span class="risk-badge green">Clean Structure</span>`;
 
-  // 5. Model Snapshot
   if (data.stress_test && data.stress_test.model_snapshot) {
     const snap = data.stress_test.model_snapshot;
     document.getElementById("linearStability").innerText = snap.linear_model_stability;
     document.getElementById("treeStability").innerText = snap.tree_model_stability;
-  } else {
-    document.getElementById("linearStability").innerText = "N/A (Non-classification)";
-    document.getElementById("treeStability").innerText = "N/A (Non-classification)";
+  } else if (data.stress_test && data.stress_test.unsupervised_snapshot) {
+    const unsup = data.stress_test.unsupervised_snapshot;
+    document.getElementById("linearStability").innerText = unsup.scale_disparity ? "Scale Alert" : "Balanced";
+    document.getElementById("treeStability").innerText = `${unsup.components_for_80_pct} PCs (80% Var)`;
   }
 }
 
