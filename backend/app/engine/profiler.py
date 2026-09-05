@@ -1,6 +1,34 @@
+import re
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, List, Optional
+
+ID_PATTERNS = [
+    r"^id$", r".*_id$", r"^id_.*", r"^uuid$", r"^guid$", r"^index$", r"^row_id$"
+]
+
+def is_identifier_column(series: pd.Series, col_name: str) -> bool:
+    """Detects primary keys, sequential row IDs, and UUIDs."""
+    col_clean = str(col_name).strip().lower()
+    n_unique = series.nunique(dropna=True)
+    n_total = len(series.dropna())
+
+    if n_total < 10:
+        return False
+
+    uniqueness_ratio = n_unique / n_total
+
+    # Name matching with high uniqueness
+    for pattern in ID_PATTERNS:
+        if re.search(pattern, col_clean) and uniqueness_ratio > 0.85:
+            return True
+
+    # Generic high uniqueness on integer sequence or objects
+    if uniqueness_ratio >= 0.98:
+        if pd.api.types.is_integer_dtype(series) or pd.api.types.is_string_dtype(series):
+            return True
+
+    return False
 
 def compute_shannon_entropy(series: pd.Series) -> float:
     clean_series = series.dropna()
@@ -84,10 +112,15 @@ def profile_dataset(
     duplicate_rows = int(df.duplicated().sum())
     duplicate_ratio = float(duplicate_rows / total_rows) if total_rows > 0 else 0.0
 
-    numeric_cols = list(df.select_dtypes(include=[np.number]).columns)
-    categorical_cols = list(df.select_dtypes(include=["object", "category", "bool"]).columns)
+    # Identify and isolate ID columns
+    id_columns = [col for col in df.columns if is_identifier_column(df[col], col)]
 
-    # Per Column Stats
+    # Feature subsets excluding IDs
+    feature_df = df.drop(columns=id_columns, errors="ignore")
+    numeric_cols = list(feature_df.select_dtypes(include=[np.number]).columns)
+    categorical_cols = list(feature_df.select_dtypes(include=["object", "category", "bool"]).columns)
+
+    # Column Profiles
     column_profiles = []
     high_cardinality_cols = []
     for col in df.columns:
@@ -96,12 +129,11 @@ def profile_dataset(
         null_count = int(col_series.isnull().sum())
         null_pct = float(null_count / total_rows * 100) if total_rows > 0 else 0.0
         ent = compute_shannon_entropy(col_series)
-        
-        # Variance for unsupervised scaling checks
         variance = float(col_series.dropna().var()) if col in numeric_cols and len(col_series.dropna()) > 1 else 0.0
         
+        is_id = col in id_columns
         is_high_card = bool(col in categorical_cols and n_unique > 50 and n_unique > (0.2 * total_rows))
-        if is_high_card:
+        if is_high_card and not is_id:
             high_cardinality_cols.append(col)
 
         column_profiles.append({
@@ -112,10 +144,11 @@ def profile_dataset(
             "unique_count": n_unique,
             "shannon_entropy": round(ent, 3),
             "variance": round(variance, 2),
-            "is_high_cardinality": is_high_card
+            "is_high_cardinality": is_high_card,
+            "is_identifier": is_id
         })
 
-    # Task Specific Metrics
+    # Task Checks
     has_severe_imbalance = False
     has_moderate_imbalance = False
     has_high_skew = False
@@ -129,8 +162,6 @@ def profile_dataset(
             regression_stats = reg_metrics
             if abs(reg_metrics["skewness"]) > 1.5:
                 has_high_skew = True
-            
-            # Target Distribution Histogram Bins
             clean_t = pd.to_numeric(df[target_column], errors="coerce").dropna()
             if len(clean_t) > 0:
                 counts, bin_edges = np.histogram(clean_t, bins=8)
@@ -148,10 +179,10 @@ def profile_dataset(
                 elif maj_ratio >= 0.65:
                     has_moderate_imbalance = True
 
-    # Multicollinearity
+    # Multicollinearity (calculated on non-ID numeric columns)
     collinear_pairs = []
     if len(numeric_cols) > 1:
-        corr_matrix = df[numeric_cols].corr(method="pearson").abs()
+        corr_matrix = feature_df[numeric_cols].corr(method="pearson").abs()
         for i in range(len(numeric_cols)):
             for j in range(i + 1, len(numeric_cols)):
                 c1, c2 = numeric_cols[i], numeric_cols[j]
@@ -163,7 +194,7 @@ def profile_dataset(
                         "correlation": round(float(val), 3)
                     })
 
-    # Cramér's V
+    # Cramér's V (calculated on non-ID categorical columns)
     cramers_matrix = {}
     if len(categorical_cols) > 1:
         for c1 in categorical_cols:
@@ -172,27 +203,26 @@ def profile_dataset(
                 if c1 == c2:
                     cramers_matrix[c1][c2] = 1.0
                 else:
-                    cramers_matrix[c1][c2] = round(compute_cramers_v(df[c1], df[c2]), 3)
+                    cramers_matrix[c1][c2] = round(compute_cramers_v(feature_df[c1], feature_df[c2]), 3)
 
-    # Leakage
+    # Leakage (excluding ID columns)
     has_leakage_suspect = False
     leakage_suspects = []
     if target_column and target_column in df.columns and task_type != "unsupervised":
-        for col in df.columns:
+        for col in feature_df.columns:
             if col == target_column:
                 continue
             if col in numeric_cols and target_column in numeric_cols:
-                corr = abs(df[col].corr(df[target_column]))
+                corr = abs(feature_df[col].corr(feature_df[target_column]))
                 if not np.isnan(corr) and corr >= 0.98:
                     has_leakage_suspect = True
                     leakage_suspects.append(col)
             elif col in categorical_cols:
-                v = compute_cramers_v(df[col], df[target_column])
+                v = compute_cramers_v(feature_df[col], feature_df[target_column])
                 if v >= 0.98:
                     has_leakage_suspect = True
                     leakage_suspects.append(col)
 
-    # Health Score
     health_score = calculate_dqaf_health_score(
         missing_ratio=missing_ratio,
         duplicate_ratio=duplicate_ratio,
@@ -213,7 +243,8 @@ def profile_dataset(
             "duplicate_rows": duplicate_rows,
             "duplicate_row_pct": round(duplicate_ratio * 100, 2),
             "numeric_column_count": len(numeric_cols),
-            "categorical_column_count": len(categorical_cols)
+            "categorical_column_count": len(categorical_cols),
+            "id_columns": id_columns
         },
         "health_score": health_score,
         "risk_flags": {
@@ -223,7 +254,8 @@ def profile_dataset(
             "has_leakage_suspect": has_leakage_suspect,
             "leakage_columns": leakage_suspects,
             "high_cardinality_columns": high_cardinality_cols,
-            "collinear_pairs": collinear_pairs
+            "collinear_pairs": collinear_pairs,
+            "id_columns": id_columns
         },
         "class_distribution": class_distribution,
         "regression_stats": regression_stats,

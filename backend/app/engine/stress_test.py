@@ -10,11 +10,27 @@ from sklearn.ensemble import (
     HistGradientBoostingRegressor
 )
 from sklearn.decomposition import PCA
-from sklearn.metrics import f1_score, precision_recall_curve, auc, r2_score, mean_squared_error
+from sklearn.metrics import f1_score, r2_score
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
+import re
+
+ID_PATTERNS = [r"^id$", r".*_id$", r"^id_.*", r"^uuid$", r"^guid$", r"^index$", r"^row_id$"]
+
+def drop_id_columns(df: pd.DataFrame) -> pd.DataFrame:
+    cols_to_drop = []
+    for col in df.columns:
+        col_clean = str(col).strip().lower()
+        n_unique = df[col].nunique(dropna=True)
+        n_total = len(df[col].dropna())
+        if n_total > 10 and (n_unique / n_total) > 0.85:
+            for p in ID_PATTERNS:
+                if re.search(p, col_clean):
+                    cols_to_drop.append(col)
+                    break
+    return df.drop(columns=cols_to_drop, errors="ignore")
 
 def build_preprocessing_pipeline(X: pd.DataFrame) -> ColumnTransformer:
     num_cols = list(X.select_dtypes(include=[np.number]).columns)
@@ -39,6 +55,8 @@ def build_preprocessing_pipeline(X: pd.DataFrame) -> ColumnTransformer:
 
 def run_classification_stress_test(df: pd.DataFrame, target_col: str, max_sample_rows: int = 5000) -> Dict[str, Any]:
     clean_df = df.dropna(subset=[target_col]).copy()
+    clean_df = drop_id_columns(clean_df)
+
     if len(clean_df) > max_sample_rows:
         clean_df = clean_df.groupby(target_col, group_keys=False).apply(
             lambda x: x.sample(min(len(x), int(max_sample_rows / clean_df[target_col].nunique())), random_state=42)
@@ -96,6 +114,8 @@ def run_classification_stress_test(df: pd.DataFrame, target_col: str, max_sample
 
 def run_regression_stress_test(df: pd.DataFrame, target_col: str, max_sample_rows: int = 5000) -> Dict[str, Any]:
     clean_df = df.dropna(subset=[target_col]).copy()
+    clean_df = drop_id_columns(clean_df)
+
     if len(clean_df) > max_sample_rows:
         clean_df = clean_df.sample(max_sample_rows, random_state=42).reset_index(drop=True)
 
@@ -130,7 +150,6 @@ def run_regression_stress_test(df: pd.DataFrame, target_col: str, max_sample_row
             reg.fit(X_train_proc, y_train)
             preds = reg.predict(X_val_proc)
             r2 = float(r2_score(y_val, preds))
-            # Bound R2 display at 0 minimum for clean plotting
             degradation_curve["models"][name].append(round(max(r2, 0.0), 3))
 
     r_drop = degradation_curve["models"]["Ridge Regression"][0] - degradation_curve["models"]["Ridge Regression"][-1]
@@ -149,7 +168,9 @@ def run_regression_stress_test(df: pd.DataFrame, target_col: str, max_sample_row
     }
 
 def run_unsupervised_profiler(df: pd.DataFrame, max_sample_rows: int = 5000) -> Dict[str, Any]:
-    sample_df = df.sample(min(len(df), max_sample_rows), random_state=42) if len(df) > max_sample_rows else df.copy()
+    sample_df = drop_id_columns(df)
+    if len(sample_df) > max_sample_rows:
+        sample_df = sample_df.sample(max_sample_rows, random_state=42)
 
     preprocessor = build_preprocessing_pipeline(sample_df)
     X_proc = preprocessor.fit_transform(sample_df)
@@ -163,8 +184,7 @@ def run_unsupervised_profiler(df: pd.DataFrame, max_sample_rows: int = 5000) -> 
 
     labels = [f"PC{i+1}" for i in range(len(exp_variance))]
 
-    # Features scale disparities
-    numeric_df = df.select_dtypes(include=[np.number])
+    numeric_df = sample_df.select_dtypes(include=[np.number])
     variances = numeric_df.var().dropna().to_dict()
     scale_disparity = False
     if len(variances) > 1:
@@ -193,7 +213,6 @@ def run_task_benchmark(
     task_type: str = "classification",
     max_sample_rows: int = 5000
 ) -> Dict[str, Any]:
-    """Routes to the proper benchmark engine based on active task mode."""
     if task_type == "unsupervised" or not target_col:
         return run_unsupervised_profiler(df, max_sample_rows)
     elif task_type == "regression":

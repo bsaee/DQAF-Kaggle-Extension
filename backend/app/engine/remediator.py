@@ -109,6 +109,19 @@ def generate_remediation_recipes(
             )
         })
 
+    # ID Column Pruning Recipe
+    id_cols = risk_flags.get("id_columns", [])
+    if id_cols:
+        recipes.append({
+            "title": f"Drop Identifier Columns ({len(id_cols)} Detected)",
+            "description": f"Columns {id_cols} act as arbitrary keys/identifiers. Retaining them causes model memorization and cardinality bloat.",
+            "code": (
+                f"# Drop arbitrary ID / key columns:\n"
+                f"id_cols_to_drop = {id_cols}\n"
+                "df_clean = df.drop(columns=id_cols_to_drop)"
+            )
+        })
+
     if not recipes:
         recipes.append({
             "title": "Standard Imputation & Scaling Pipeline",

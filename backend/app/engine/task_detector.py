@@ -7,8 +7,21 @@ TARGET_NAME_PATTERNS = [
     r"^status$", r"^is_", r"^has_", r"^outcome$", r"^y$"
 ]
 
+ID_PATTERNS = [
+    r"^id$", r".*_id$", r"^id_.*", r"^uuid$", r"^guid$", r"^index$", r"^row_id$"
+]
+
+def is_id_col(col: str, series: pd.Series) -> bool:
+    col_lower = str(col).strip().lower()
+    n_unique = series.nunique(dropna=True)
+    n_total = len(series.dropna())
+    if n_total > 10 and (n_unique / n_total) > 0.85:
+        for p in ID_PATTERNS:
+            if re.search(p, col_lower):
+                return True
+    return False
+
 def is_categorical_or_discrete(series: pd.Series) -> bool:
-    """Checks if a series behaves like a discrete classification target."""
     n_unique = series.nunique(dropna=True)
     if n_unique <= 1:
         return False
@@ -22,81 +35,77 @@ def is_categorical_or_discrete(series: pd.Series) -> bool:
     return False
 
 def infer_target_column(df: pd.DataFrame) -> Optional[str]:
-    columns = list(df.columns)
-    for col in columns:
+    # Candidates excluding obvious IDs
+    candidate_cols = [c for c in df.columns if not is_id_col(c, df[c])]
+
+    for col in candidate_cols:
         col_lower = str(col).strip().lower()
         for pattern in TARGET_NAME_PATTERNS:
             if re.search(pattern, col_lower) and is_categorical_or_discrete(df[col]):
                 return col
 
-    last_col = columns[-1]
-    if is_categorical_or_discrete(df[last_col]):
-        return last_col
-
-    for col in reversed(columns):
+    for col in reversed(candidate_cols):
         if df[col].nunique(dropna=True) == 2:
             return col
 
-    for col in reversed(columns):
+    for col in reversed(candidate_cols):
         if is_categorical_or_discrete(df[col]):
             return col
 
-    return None
+    return candidate_cols[-1] if candidate_cols else None
 
 def detect_task_type(
     df: pd.DataFrame,
     target_column: Optional[str] = None,
     task_mode: str = "auto"
 ) -> Dict[str, Any]:
-    # 1. Unsupervised / Clustering Mode
+    # Filter target options to exclude ID columns
+    usable_columns = [c for c in df.columns if not is_id_col(c, df[c])]
+
     if task_mode == "unsupervised":
         return {
             "target_column": None,
             "task_type": "unsupervised",
             "is_supported": False,
-            "reason": "Unsupervised / Clustering mode selected by user.",
+            "reason": "Unsupervised mode selected.",
             "cardinality": None,
-            "available_columns": list(df.columns)
+            "available_columns": usable_columns
         }
 
-    # 2. Resolve Target Column
     selected_target = target_column if (target_column and target_column in df.columns) else infer_target_column(df)
 
-    # 3. Regression Mode
     if task_mode == "regression":
         n_unique = df[selected_target].nunique() if selected_target else 0
         return {
             "target_column": selected_target,
             "task_type": "regression",
             "is_supported": False,
-            "reason": "Regression task selected. Classification stress-tests are disabled.",
+            "reason": "Regression task selected.",
             "cardinality": n_unique,
-            "available_columns": list(df.columns)
+            "available_columns": usable_columns
         }
 
-    # 4. Explicit Classification Mode
     if task_mode == "classification":
-        if selected_target is None:
-            selected_target = df.columns[-1]
-        n_unique = df[selected_target].nunique()
+        if selected_target is None and usable_columns:
+            selected_target = usable_columns[-1]
+        n_unique = df[selected_target].nunique() if selected_target else 0
         return {
             "target_column": selected_target,
             "task_type": "binary_classification" if n_unique == 2 else "multiclass_classification",
             "is_supported": True,
-            "reason": f"Classification mode enforced on '{selected_target}'.",
+            "reason": f"Classification enforced on '{selected_target}'.",
             "cardinality": n_unique,
-            "available_columns": list(df.columns)
+            "available_columns": usable_columns
         }
 
-    # 5. Auto-Detection (Default)
     if selected_target is None:
         return {
             "target_column": None,
             "task_type": "unsupervised",
             "is_supported": False,
-            "reason": "No discrete target detected. Auto-routed to Unsupervised/Clustering.",
+            "reason": "No valid target identified. Defaulted to unsupervised.",
             "cardinality": None,
-            "available_columns": list(df.columns)
+            "available_columns": usable_columns
         }
 
     target_series = df[selected_target].dropna()
@@ -105,19 +114,19 @@ def detect_task_type(
     if n_unique == 2:
         task_type = "binary_classification"
         is_supported = True
-        reason = "Binary classification target identified."
+        reason = "Binary classification target detected."
     elif 3 <= n_unique <= 20:
         task_type = "multiclass_classification"
         is_supported = True
-        reason = f"Multiclass classification target identified ({n_unique} classes)."
+        reason = f"Multiclass target detected ({n_unique} classes)."
     elif pd.api.types.is_numeric_dtype(target_series) and n_unique > 20:
         task_type = "regression"
         is_supported = False
-        reason = f"Continuous target detected ({n_unique} unique values). Regression task."
+        reason = "Continuous regression target detected."
     else:
         task_type = "high_cardinality_unsupported"
         is_supported = False
-        reason = f"Target '{selected_target}' has {n_unique} unique values."
+        reason = f"High cardinality target ({n_unique} distinct values)."
 
     return {
         "target_column": selected_target,
@@ -125,5 +134,5 @@ def detect_task_type(
         "is_supported": is_supported,
         "reason": reason,
         "cardinality": n_unique,
-        "available_columns": list(df.columns)
+        "available_columns": usable_columns
     }
