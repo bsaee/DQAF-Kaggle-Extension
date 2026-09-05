@@ -23,10 +23,33 @@ def is_identifier_column(series: pd.Series, col_name: str) -> bool:
         if re.search(pattern, col_clean) and uniqueness_ratio > 0.85:
             return True
 
-    # Generic high uniqueness on integer sequence or objects
+    # Generic high uniqueness on integer sequence or strings
     if uniqueness_ratio >= 0.98:
         if pd.api.types.is_integer_dtype(series) or pd.api.types.is_string_dtype(series):
             return True
+
+    return False
+
+def is_pseudo_numeric_categorical(series: pd.Series) -> bool:
+    """Detects numeric columns representing discrete categorical encodings (e.g., 0/1 or 1/2/3)."""
+    clean = series.dropna()
+    if len(clean) == 0:
+        return False
+
+    n_unique = clean.nunique()
+
+    # Binary flags (0/1, -1/1)
+    if n_unique == 2:
+        return True
+
+    # Low-cardinality integers
+    if pd.api.types.is_integer_dtype(series):
+        return n_unique <= 10
+
+    # Low-cardinality floats that have integer values (e.g., 1.0, 2.0 due to NaN coercion)
+    if pd.api.types.is_float_dtype(series):
+        is_integer_like = (clean % 1 == 0).all()
+        return is_integer_like and (n_unique <= 10)
 
     return False
 
@@ -112,15 +135,24 @@ def profile_dataset(
     duplicate_rows = int(df.duplicated().sum())
     duplicate_ratio = float(duplicate_rows / total_rows) if total_rows > 0 else 0.0
 
-    # Identify and isolate ID columns
+    # 1. Identify and isolate identifier columns
     id_columns = [col for col in df.columns if is_identifier_column(df[col], col)]
-
-    # Feature subsets excluding IDs
     feature_df = df.drop(columns=id_columns, errors="ignore")
-    numeric_cols = list(feature_df.select_dtypes(include=[np.number]).columns)
-    categorical_cols = list(feature_df.select_dtypes(include=["object", "category", "bool"]).columns)
 
-    # Column Profiles
+    # 2. Partition into true continuous numerics vs. true categoricals (including pseudo-numerics)
+    raw_numeric_cols = list(feature_df.select_dtypes(include=[np.number]).columns)
+    raw_categorical_cols = list(feature_df.select_dtypes(include=["object", "category", "bool"]).columns)
+
+    numeric_cols = []
+    categorical_cols = list(raw_categorical_cols)
+
+    for col in raw_numeric_cols:
+        if is_pseudo_numeric_categorical(feature_df[col]):
+            categorical_cols.append(col)
+        else:
+            numeric_cols.append(col)
+
+    # 3. Column Profiles
     column_profiles = []
     high_cardinality_cols = []
     for col in df.columns:
@@ -130,15 +162,18 @@ def profile_dataset(
         null_pct = float(null_count / total_rows * 100) if total_rows > 0 else 0.0
         ent = compute_shannon_entropy(col_series)
         variance = float(col_series.dropna().var()) if col in numeric_cols and len(col_series.dropna()) > 1 else 0.0
-        
+
         is_id = col in id_columns
         is_high_card = bool(col in categorical_cols and n_unique > 50 and n_unique > (0.2 * total_rows))
         if is_high_card and not is_id:
             high_cardinality_cols.append(col)
 
+        inferred_type = "identifier" if is_id else ("categorical" if col in categorical_cols else "numeric")
+
         column_profiles.append({
             "name": col,
             "dtype": str(col_series.dtype),
+            "inferred_type": inferred_type,
             "null_count": null_count,
             "null_pct": round(null_pct, 2),
             "unique_count": n_unique,
@@ -148,7 +183,7 @@ def profile_dataset(
             "is_identifier": is_id
         })
 
-    # Task Checks
+    # 4. Task Specific Metrics
     has_severe_imbalance = False
     has_moderate_imbalance = False
     has_high_skew = False
@@ -179,7 +214,7 @@ def profile_dataset(
                 elif maj_ratio >= 0.65:
                     has_moderate_imbalance = True
 
-    # Multicollinearity (calculated on non-ID numeric columns)
+    # 5. Multicollinearity (calculated only on continuous numeric columns)
     collinear_pairs = []
     if len(numeric_cols) > 1:
         corr_matrix = feature_df[numeric_cols].corr(method="pearson").abs()
@@ -194,7 +229,7 @@ def profile_dataset(
                         "correlation": round(float(val), 3)
                     })
 
-    # Cramér's V (calculated on non-ID categorical columns)
+    # 6. Cramér's V (calculated on all categoricals including pseudo-numerics)
     cramers_matrix = {}
     if len(categorical_cols) > 1:
         for c1 in categorical_cols:
@@ -205,7 +240,7 @@ def profile_dataset(
                 else:
                     cramers_matrix[c1][c2] = round(compute_cramers_v(feature_df[c1], feature_df[c2]), 3)
 
-    # Leakage (excluding ID columns)
+    # 7. Leakage Suspects
     has_leakage_suspect = False
     leakage_suspects = []
     if target_column and target_column in df.columns and task_type != "unsupervised":

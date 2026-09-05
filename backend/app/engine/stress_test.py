@@ -1,3 +1,4 @@
+import re
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, List, Optional
@@ -15,11 +16,11 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
-import re
 
 ID_PATTERNS = [r"^id$", r".*_id$", r"^id_.*", r"^uuid$", r"^guid$", r"^index$", r"^row_id$"]
 
 def drop_id_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Removes identified unique index and key columns prior to ML benchmarking."""
     cols_to_drop = []
     for col in df.columns:
         col_clean = str(col).strip().lower()
@@ -33,25 +34,43 @@ def drop_id_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=cols_to_drop, errors="ignore")
 
 def build_preprocessing_pipeline(X: pd.DataFrame) -> ColumnTransformer:
-    num_cols = list(X.select_dtypes(include=[np.number]).columns)
+    """Separates true continuous numerics from categoricals (including pseudo-numeric codes)."""
+    raw_num = list(X.select_dtypes(include=[np.number]).columns)
     cat_cols = list(X.select_dtypes(include=["object", "category", "bool"]).columns)
 
-    num_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler())
-    ])
+    num_cols = []
+    for col in raw_num:
+        clean = X[col].dropna()
+        n_unique = clean.nunique()
+        # Treat low-cardinality discrete integers/flags as categorical encodings
+        is_discrete = (n_unique <= 2) or (pd.api.types.is_integer_dtype(X[col]) and n_unique <= 10)
+        if is_discrete:
+            cat_cols.append(col)
+        else:
+            num_cols.append(col)
 
-    cat_transformer = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),
-        ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
-    ])
+    transformers = []
+    if num_cols:
+        transformers.append((
+            "num",
+            Pipeline(steps=[
+                ("imputer", SimpleImputer(strategy="median")),
+                ("scaler", StandardScaler())
+            ]),
+            num_cols
+        ))
 
-    return ColumnTransformer(
-        transformers=[
-            ("num", num_transformer, num_cols),
-            ("cat", cat_transformer, cat_cols)
-        ]
-    )
+    if cat_cols:
+        transformers.append((
+            "cat",
+            Pipeline(steps=[
+                ("imputer", SimpleImputer(strategy="most_frequent")),
+                ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+            ]),
+            cat_cols
+        ))
+
+    return ColumnTransformer(transformers=transformers)
 
 def run_classification_stress_test(df: pd.DataFrame, target_col: str, max_sample_rows: int = 5000) -> Dict[str, Any]:
     clean_df = df.dropna(subset=[target_col]).copy()
